@@ -1,8 +1,19 @@
+import os
+import sys
+
+# [핵심 수정] Streamlit Cloud에서 pages/ 폴더 안의 스크립트가 루트의 utils를 찾지 못하는 문제 해결
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
+
+# 이제 루트 경로가 정상적으로 잡혀서 utils 모듈들을 안정적으로 불러올 수 있습니다.
 from utils.data_loader import load_latest_weather_file
 from utils.weather_emojis import (
     deg_to_compass,
@@ -109,7 +120,6 @@ if not df_current.empty:
     with col2:
         st.metric(label="습도", value=hum_text)
     with col3:
-        # 💡 강수 형태 칸에는 이모지를 빼고 깔끔하게 텍스트(없음, 비 등)만 출력
         st.metric(label="강수 형태", value=pty_clean)
 
     st.markdown("<div style='margin: 10px 0;'></div>", unsafe_allow_html=True)
@@ -158,7 +168,6 @@ if not df_forecast.empty:
             with cols[idx]:
                 bg_color, text_color, pop_str = get_pop_style(item["pop"])
                 
-                # 예보 시각(Hour) 안전 파싱
                 target_hour = 12
                 try:
                     time_part = str(item["time"]).strip()
@@ -169,7 +178,6 @@ if not df_forecast.empty:
                 except (ValueError, IndexError, TypeError):
                     target_hour = 12
                 
-                # 유틸 함수를 통해 예보 카드 이모지 산출 (하늘 상태 + 강수 형태 듀얼)
                 sky_emoji = get_sky_emoji(item["sky"], target_hour)
                 pty_emoji = get_pty_emoji(item["pty"])
                 display_emoji = f"{sky_emoji}{pty_emoji}" if pty_emoji else sky_emoji
@@ -189,7 +197,7 @@ if not df_forecast.empty:
 else:
     st.warning("성남 단기 예보 데이터를 찾을 수 없습니다.")
 
-# [이모지 가이드 가이드라인 박스 추가]
+# 이모지 가이드라인 박스
 st.markdown("<br>", unsafe_allow_html=True)
 with st.container():
     st.markdown("""
