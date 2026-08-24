@@ -7,7 +7,8 @@ from utils.data_loader import load_latest_weather_file
 from utils.weather_emojis import (
     deg_to_compass,
     clean_pty,
-    get_representative_emoji,
+    get_sky_emoji,
+    get_pty_emoji,
     get_rainfall_emoji,
     get_temperature_display,
     get_humidity_display,
@@ -21,7 +22,6 @@ st.set_page_config(page_title="성남 날씨 대시보드", page_icon="🏙️",
 KST = ZoneInfo("Asia/Seoul")
 
 # [자동 새로고침 설정] 30초(30000ms)마다 백그라운드 체크
-# 매 시간 50분이 되면 캐시를 비우고 데이터를 최신으로 갱신합니다.
 count = st_autorefresh(interval=30 * 1000, key="weather_autorefresh")
 
 current_time = datetime.now(KST)
@@ -56,7 +56,6 @@ if not df_current.empty:
     
     collect_time = str(curr_row.get("수집시각", "정보 없음"))
     
-    # [안전 파싱 및 강제 탐색] 컬럼명 매칭 실패 시 인덱스(iloc)로 안전하게 추출
     base_date_raw = None
     base_time_raw = None
     
@@ -72,10 +71,8 @@ if not df_current.empty:
     if base_time_raw is None and len(curr_row.index) > 2:
         base_time_raw = curr_row.iloc[2]
 
-    # 날짜 정제
     base_date = str(base_date_raw).split('.')[0].strip() if base_date_raw is not None and pd.notna(base_date_raw) else ""
     
-    # 시간 정제 (숫자 0, 0.0, 문자열 0000 등 모든 포맷을 4자리 '0000'으로 안전 보정)
     if base_time_raw is not None and pd.notna(base_time_raw):
         try:
             base_time = str(int(float(base_time_raw))).zfill(4)
@@ -84,7 +81,6 @@ if not df_current.empty:
     else:
         base_time = "0000"
         
-    # 최종 발표 시각 포맷팅
     if len(base_date) == 8 and len(base_time) >= 4:
         base_formatted = f"{base_date[:4]}-{base_date[4:6]}-{base_date[6:]} {base_time[:2]}:{base_time[2:4]}"
     else:
@@ -93,6 +89,7 @@ if not df_current.empty:
     temp_raw = curr_row.get("기온(℃)[T1H]", "-")
     hum_raw = curr_row.get("습도(%)[REH]", "-")
     pty_raw = curr_row.get("강수형태[PTY]", "0")
+    sky_current_raw = curr_row.get("하늘상태[SKY]", "1")
     rn1_raw = curr_row.get("1시간강수량[RN1]", "-")
     wsd = curr_row.get("풍속(m/s)[WSD]", "-")
     vec = curr_row.get("풍향(deg)[VEC]", "-")
@@ -100,7 +97,7 @@ if not df_current.empty:
     temp_text = get_temperature_display(temp_raw)
     hum_text = get_humidity_display(hum_raw)
     pty_clean = clean_pty(pty_raw)
-    curr_rep_emoji = get_representative_emoji("1", pty_raw)
+    
     rn1_emoji = get_rainfall_emoji(rn1_raw)
     compass_text, arrow_icon = deg_to_compass(vec)
 
@@ -112,7 +109,8 @@ if not df_current.empty:
     with col2:
         st.metric(label="습도", value=hum_text)
     with col3:
-        st.metric(label="강수 형태", value=f"{curr_rep_emoji} {pty_clean}")
+        # 💡 강수 형태 칸에는 이모지를 빼고 깔끔하게 텍스트(없음, 비 등)만 출력
+        st.metric(label="강수 형태", value=pty_clean)
 
     st.markdown("<div style='margin: 10px 0;'></div>", unsafe_allow_html=True)
 
@@ -142,14 +140,16 @@ if not df_forecast.empty:
         if time_col in latest_row and pd.notna(latest_row[time_col]):
             temp_val = latest_row.get(f"{prefix}기온(℃)[T1H]")
             hum_val = latest_row.get(f"{prefix}습도(%)[REH]")
+            sky_val = latest_row.get(f"{prefix}하늘상태[SKY]")
+            pty_val = latest_row.get(f"{prefix}강수형태[PTY]")
             
             forecast_items.append({
                 "time": latest_row.get(time_col),
                 "temp": f"{temp_val} ℃" if temp_val != "-" else "-",
                 "hum": f"{hum_val} %" if hum_val != "-" else "-",
                 "pop": latest_row.get(f"{prefix}강수확률(%)[POP]"),
-                "sky": latest_row.get(f"{prefix}하늘상태[SKY]"),
-                "pty": latest_row.get(f"{prefix}강수형태[PTY]")
+                "sky": sky_val,
+                "pty": pty_val
             })
             
     if forecast_items:
@@ -157,12 +157,27 @@ if not df_forecast.empty:
         for idx, item in enumerate(forecast_items):
             with cols[idx]:
                 bg_color, text_color, pop_str = get_pop_style(item["pop"])
-                rep_em = get_representative_emoji(item["sky"], item["pty"])
+                
+                # 예보 시각(Hour) 안전 파싱
+                target_hour = 12
+                try:
+                    time_part = str(item["time"]).strip()
+                    if " " in time_part:
+                        time_part = time_part.split(" ")[1]
+                    if ":" in time_part:
+                        target_hour = int(time_part.split(":")[0])
+                except (ValueError, IndexError, TypeError):
+                    target_hour = 12
+                
+                # 유틸 함수를 통해 예보 카드 이모지 산출 (하늘 상태 + 강수 형태 듀얼)
+                sky_emoji = get_sky_emoji(item["sky"], target_hour)
+                pty_emoji = get_pty_emoji(item["pty"])
+                display_emoji = f"{sky_emoji}{pty_emoji}" if pty_emoji else sky_emoji
                 
                 st.markdown(f"""
                     <div style="background-color: {bg_color}; border: 1px solid #b8daff; padding: 12px; border-radius: 10px; text-align: center;">
                         <b style="font-size: 14px; color: #333;">{item['time']}</b><hr style="margin: 6px 0;">
-                        <div style="font-size: 22px; margin: 4px 0;">{rep_em}</div>
+                        <div style="font-size: 22px; margin: 4px 0;">{display_emoji}</div>
                         <div style="font-size: 15px; font-weight: bold; color: {text_color}; margin: 4px 0;">☂️ {pop_str}</div>
                         <div style="font-size: 12px; color: #333; margin-top: 6px;">
                             {item['temp']} &nbsp;|&nbsp; {item['hum']}
@@ -174,7 +189,21 @@ if not df_forecast.empty:
 else:
     st.warning("성남 단기 예보 데이터를 찾을 수 없습니다.")
 
-# 3. 원본 데이터 모아보기 섹션 (페이지 맨 아래)
+# [이모지 가이드 가이드라인 박스 추가]
+st.markdown("<br>", unsafe_allow_html=True)
+with st.container():
+    st.markdown("""
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; font-size: 13px; color: #495057;">
+            <b>📌 날씨 이모지 가이드</b><br><br>
+            <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+                <div><b>[하늘 상태]</b> ☀️ 맑음(낮) &nbsp;|&nbsp; 🌙 맑음(밤) &nbsp;|&nbsp; ⛅ 구름많음 &nbsp;|&nbsp; ☁️ 흐림</div>
+                <div><b>[강수 형태]</b> 🌧️ 비 &nbsp;|&nbsp; 🌦️ 소나기 &nbsp;|&nbsp; 🌨️ 진눈개비 &nbsp;|&nbsp; ❄️ 눈</div>
+                <div><b>[기타 지표]</b> ☂️ 강수확률 &nbsp;|&nbsp; 🥵~🧊 체감 기온 &nbsp;|&nbsp; 😡~🥴 습도 상태</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+# 3. 원본 데이터 모아보기 섹션
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.divider()
 st.subheader("🔍 수집된 원본 데이터 모아보기")
